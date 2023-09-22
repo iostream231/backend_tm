@@ -1,6 +1,14 @@
 
+use std::fs;
+use std::process::exit;
+use std::thread;
+use std::time::Duration;
+
+use chrono::Datelike;
+use chrono::Timelike;
 use serde::{Serialize, Deserialize};
 use ntex::web;
+use chrono;
 
 #[web::get("/")]
 async fn index() -> impl web::Responder {
@@ -85,7 +93,7 @@ async fn list_tasks_get() -> impl web::Responder {
 
 
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct CreatedTask {
     task_type : String, 
     name : String,
@@ -93,14 +101,23 @@ struct CreatedTask {
     end_time: i64
 }
 #[web::post("/create_task")]
-async fn create_task(task : web::types::Form<CreatedTask>) -> Result<String, web::Error> {
+async fn create_task(task_str : String) -> Result<String, web::Error> {
     let cnt = get_connection();
 
+    let task = serde_json::from_str::<CreatedTask>(task_str.as_str()).unwrap();
     let query = format!("INSERT INTO tasks VALUES ('{}', '{}', {}, {}, 0)", task.task_type, task.name, task.start_time, task.end_time);
 
     cnt.execute(query).unwrap_or_else(|err| {
         println!("Error : Creating New Task {err}");
+        println!("{:#?}", task);
     });
+
+    Ok(String::from("Success"))
+}
+
+#[web::post("test_something")]
+async fn test_something(task : String) -> Result<String, web::Error> {
+    println!("{}", task);
 
     Ok(String::from("Success"))
 }
@@ -150,10 +167,104 @@ async fn delete_task(task: web::types::Json<DeleteTask>) -> Result<String, web::
 
 
 
+// Update The Database by only keeping today's tasks + priority ones
+fn update_db() {
+    let cnt = get_connection(); 
+    
+    let query = "SELECT * FROM tasks";
+    let mut statement = cnt.prepare(query).unwrap();
 
+   
+    let mut res : Vec<Task> = vec![];
+ 
+    while let Ok(sqlite::State::Row) = statement.next() {
+        let new_tsk =Task { 
+            task_type : statement.read::<String, _>("type").unwrap(),
+            name : statement.read::<String, _>("name").unwrap(),
+            is_done : statement.read::<i64, _>("is_done").unwrap(),
+            start_time : statement.read::<i64, _>("start_time").unwrap(),
+            end_time : statement.read::<i64, _>("end_time").unwrap()
+
+        }; 
+        res.push(new_tsk);
+    }
+
+    for i in res.iter() {
+        let dt = chrono::DateTime::from_timestamp(i.start_time, 0).unwrap();
+        let sec_dt = chrono::Local::now();
+
+        if i.task_type == "F" && sec_dt.day0() > dt.day0() {
+
+            // Deleting the task
+            let query = format!("DELETE FROM tasks WHERE name = '{}'", i.name);
+
+            if let Ok(_) = cnt.execute(query) {
+                let dat = format!("{}:{}:{}:{}", i.name, i.task_type, i.start_time, i.end_time);
+                fs::write(format!("db/{}.txt", dt.day0()), dat).unwrap();
+                println!("Deleted Task {}", i.name);
+            } else {
+                exit(-1);
+            }
+            
+        }
+    }
+}
+
+
+// Task Managing function
+async fn task_manager() {
+    thread::sleep(Duration::from_secs(5 * 60));
+
+    let cnt = get_connection(); 
+    
+    let query = "SELECT * FROM tasks";
+    let mut statement = cnt.prepare(query).unwrap();
+
+   
+    let mut res : Vec<Task> = vec![];
+ 
+    while let Ok(sqlite::State::Row) = statement.next() {
+        let new_tsk =Task { 
+            task_type : statement.read::<String, _>("type").unwrap(),
+            name : statement.read::<String, _>("name").unwrap(),
+            is_done : statement.read::<i64, _>("is_done").unwrap(),
+            start_time : statement.read::<i64, _>("start_time").unwrap(),
+            end_time : statement.read::<i64, _>("end_time").unwrap()
+
+        }; 
+        res.push(new_tsk);
+    }
+    
+
+    for i in res.iter() {
+        let start_dt = chrono::DateTime::from_timestamp(i.start_time, 0).unwrap();
+        let end_dt = chrono::DateTime::from_timestamp(i.end_time, 0).unwrap();
+        let cur_dt = chrono::Local::now();
+
+        // If you don't do ur tasks :>
+        if start_dt.hour() <= cur_dt.hour() && (end_dt.hour() >= cur_dt.hour() || end_dt.minute() >= cur_dt.minute()) {
+            // Haha it shuts down your pc
+            std::process::Command::new("program").arg("/s");
+        }
+    }
+
+}
 
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
+    // Updating the Database
+    update_db();
+
+    // Creating an idle thread for the task manager
+    let th = thread::spawn(|| {
+        // Works indefinitely ( this is seems like a bad choice ngl )
+        while true {
+            task_manager();
+            thread::sleep(Duration::from_secs(2 * 60)); // Wait another 2 minutes ( just in case );
+        }
+    });
+
+
     web::HttpServer::new(move || {
         web::App::new()    
             .service(index)
@@ -166,5 +277,5 @@ async fn main() -> std::io::Result<()> {
     .bind(("127.0.0.1", 3050))?
     .run()
     .await
-        
+    
 }
