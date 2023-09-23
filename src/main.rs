@@ -212,8 +212,7 @@ fn update_db() {
 
 
 // Task Managing function
-async fn task_manager() {
-    thread::sleep(Duration::from_secs(5 * 60));
+fn task_manager() {
 
     let cnt = get_connection(); 
     
@@ -242,11 +241,12 @@ async fn task_manager() {
         let cur_dt = chrono::Local::now();
 
         // If you don't do ur tasks :>
-        if start_dt.hour() <= cur_dt.hour() && (end_dt.hour() >= cur_dt.hour() || end_dt.minute() >= cur_dt.minute()) {
+        if (start_dt.hour() <= cur_dt.hour() && start_dt.minute() <= cur_dt.minute()) && (end_dt.hour() >= cur_dt.hour() && end_dt.minute() >= cur_dt.minute()) {
             // Haha it shuts down your pc
             std::process::Command::new("program").arg("/s");
         }
     }
+    println!("Check Completed. You don't have an ongoing task (for now)");
 
 }
 
@@ -256,11 +256,12 @@ async fn main() -> std::io::Result<()> {
     update_db();
 
     // Creating an idle thread for the task manager
-    let th = thread::spawn(|| {
+    let _th = thread::spawn(|| {
         // Works indefinitely ( this is seems like a bad choice ngl )
-        while true {
+        loop {
             task_manager();
-            thread::sleep(Duration::from_secs(2 * 60)); // Wait another 2 minutes ( just in case );
+            thread::sleep(Duration::from_secs(5 * 60));
+            // Waits 5 mins before the next check
         }
     });
 
